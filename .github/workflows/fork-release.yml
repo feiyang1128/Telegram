@@ -115,6 +115,8 @@ jobs:
           java-version: '17'
       - uses: android-actions/setup-android@v3
         if: steps.existing.outputs.exists == 'false'
+        with:
+          packages: platform-tools
       - name: Install Android toolchain
         if: steps.existing.outputs.exists == 'false'
         run: |
