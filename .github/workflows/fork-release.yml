@@ -113,6 +113,18 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Restore Gradle dependencies
+        if: steps.existing.outputs.exists == 'false'
+        uses: actions/cache@v4
+        with:
+          # Only downloaded dependencies and distributions; no compiled classes,
+          # project outputs, configuration caches, or injected signing material.
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.gradle/wrapper/dists
+          key: gradle-deps-${{ runner.os }}-jdk17-v1-${{ hashFiles('source/**/*.gradle*', 'source/gradle/wrapper/gradle-wrapper.properties', 'source/**/libs.versions.toml', 'source/buildSrc/**/*.kt') }}
+          restore-keys: |
+            gradle-deps-${{ runner.os }}-jdk17-v1-
       - uses: android-actions/setup-android@v3
         if: steps.existing.outputs.exists == 'false'
         with:

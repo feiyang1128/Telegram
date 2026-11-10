@@ -55,6 +55,8 @@ Firebase 可在 https://console.firebase.google.com 创建项目，注册与最�
 
 默认只支持 arm64；其他架构设备不要安装。Telegram 原生构建体积大，GitHub 托管 runner 可能遇到磁盘、内存或构建时长限制；首次运行后需要根据真实日志调整 runner 和上游工具链版本。
 
+Gradle 依赖缓存仅包含 `~/.gradle/caches/modules-2` 和 `~/.gradle/wrapper/dists`，复用已下载的 Maven 依赖和 Gradle 发行包。缓存键按操作系统、JDK 17 和构建配置计算；配置变更时可恢复旧依赖并下载缺少的部分。首次成功构建会保存缓存，后续构建才可复用；缓存可能被 GitHub 清理。项目构建输出、编译类、配置缓存和签名资料不在缓存范围内；APK 仍需重新编译、签名和验证。
+
 ## 维护补丁
 
 `automation/patches/customizations.patch` 保存本次定制（广告、下载、图标、推广与更新入口）。`automation/ForkUpdater.java` 是更新器的权威副本，同时在本地应用源码中保留副本。修改更新器时同步两个文件；构建脚本会把 automation 中的副本复制到上游源码。
