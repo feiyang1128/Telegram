@@ -1,3 +1,17 @@
+diff --git a/TMessagesProj/config/release/AndroidManifest_standalone.xml b/TMessagesProj/config/release/AndroidManifest_standalone.xml
+--- a/TMessagesProj/config/release/AndroidManifest_standalone.xml
++++ b/TMessagesProj/config/release/AndroidManifest_standalone.xml
+@@ -34,8 +34,8 @@
+     <uses-permission android:name="android.permission.SEND_SMS" />
+ 
+     <application
+-        android:icon="@mipmap/ic_launcher_sa"
+-        android:roundIcon="@mipmap/ic_launcher_sa"
++        android:icon="@mipmap/ic_launcher"
++        android:roundIcon="@mipmap/ic_launcher_round"
+         android:label="@string/AppName"
+         android:theme="@style/Theme.TMessages.Start"
+         android:hardwareAccelerated="true"
 diff --git a/TMessagesProj/jni/tgnet/ConnectionsManager.cpp b/TMessagesProj/jni/tgnet/ConnectionsManager.cpp
 index edab4e2c2..2582bc2e2 100644
 --- a/TMessagesProj/jni/tgnet/ConnectionsManager.cpp
