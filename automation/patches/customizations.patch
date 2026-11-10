@@ -1,4 +1,5 @@
 diff --git a/TMessagesProj/config/release/AndroidManifest_standalone.xml b/TMessagesProj/config/release/AndroidManifest_standalone.xml
+index 53e0fa790..2a9ea465f 100644
 --- a/TMessagesProj/config/release/AndroidManifest_standalone.xml
 +++ b/TMessagesProj/config/release/AndroidManifest_standalone.xml
 @@ -34,8 +34,8 @@
@@ -12,6 +13,84 @@ diff --git a/TMessagesProj/config/release/AndroidManifest_standalone.xml b/TMess
          android:label="@string/AppName"
          android:theme="@style/Theme.TMessages.Start"
          android:hardwareAccelerated="true"
+@@ -48,8 +48,8 @@
+             android:enabled="false"
+             android:name="org.telegram.messenger.VintageIcon"
+             android:targetActivity="org.telegram.ui.LaunchActivity"
+-            android:icon="@mipmap/icon_6_launcher_sa"
+-            android:roundIcon="@mipmap/icon_6_launcher_sa"
++            android:icon="@mipmap/icon_6_launcher"
++            android:roundIcon="@mipmap/icon_6_launcher_round"
+             android:exported="true"
+             tools:node="replace">
+ 
+@@ -64,8 +64,8 @@
+             android:enabled="false"
+             android:name="org.telegram.messenger.AquaIcon"
+             android:targetActivity="org.telegram.ui.LaunchActivity"
+-            android:icon="@mipmap/icon_4_launcher_sa"
+-            android:roundIcon="@mipmap/icon_4_launcher_sa"
++            android:icon="@mipmap/icon_4_launcher"
++            android:roundIcon="@mipmap/icon_4_launcher_round"
+             android:exported="true"
+             tools:node="replace">
+ 
+@@ -80,8 +80,8 @@
+             android:enabled="false"
+             android:name="org.telegram.messenger.PremiumIcon"
+             android:targetActivity="org.telegram.ui.LaunchActivity"
+-            android:icon="@mipmap/icon_3_launcher_sa"
+-            android:roundIcon="@mipmap/icon_3_launcher_sa"
++            android:icon="@mipmap/icon_3_launcher"
++            android:roundIcon="@mipmap/icon_3_launcher_round"
+             android:exported="true"
+             tools:node="replace">
+ 
+@@ -96,8 +96,8 @@
+             android:enabled="false"
+             android:name="org.telegram.messenger.TurboIcon"
+             android:targetActivity="org.telegram.ui.LaunchActivity"
+-            android:icon="@mipmap/icon_5_launcher_sa"
+-            android:roundIcon="@mipmap/icon_5_launcher_sa"
++            android:icon="@mipmap/icon_5_launcher"
++            android:roundIcon="@mipmap/icon_5_launcher_round"
+             android:exported="true"
+             tools:node="replace">
+ 
+@@ -112,8 +112,8 @@
+             android:enabled="false"
+             android:name="org.telegram.messenger.NoxIcon"
+             android:targetActivity="org.telegram.ui.LaunchActivity"
+-            android:icon="@mipmap/icon_2_launcher_sa"
+-            android:roundIcon="@mipmap/icon_2_launcher_sa"
++            android:icon="@mipmap/icon_2_launcher"
++            android:roundIcon="@mipmap/icon_2_launcher_round"
+             android:exported="true"
+             tools:node="replace">
+ 
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LauncherIconController.java b/TMessagesProj/src/main/java/org/telegram/ui/LauncherIconController.java
+index 49bf82153..94503f315 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/LauncherIconController.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/LauncherIconController.java
+@@ -34,12 +34,12 @@ public class LauncherIconController {
+     }
+ 
+     public enum LauncherIcon {
+-        DEFAULT("DefaultIcon", R.drawable.icon_background_sa, R.mipmap.icon_foreground_sa, R.string.AppIconDefault),
+-        VINTAGE("VintageIcon", R.drawable.icon_6_background_sa, R.mipmap.icon_6_foreground_sa, R.string.AppIconVintage),
+-        AQUA("AquaIcon", R.drawable.icon_4_background_sa, R.mipmap.icon_foreground_sa, R.string.AppIconAqua),
+-        PREMIUM("PremiumIcon", R.drawable.icon_3_background_sa, R.mipmap.icon_3_foreground_sa, R.string.AppIconPremium, true),
+-        TURBO("TurboIcon", R.drawable.icon_5_background_sa, R.mipmap.icon_5_foreground_sa, R.string.AppIconTurbo, true),
+-        NOX("NoxIcon", R.mipmap.icon_2_background_sa, R.mipmap.icon_foreground_sa, R.string.AppIconNox, true);
++        DEFAULT("DefaultIcon", R.drawable.icon_background, R.mipmap.icon_foreground, R.string.AppIconDefault),
++        VINTAGE("VintageIcon", R.drawable.icon_6_background, R.mipmap.icon_6_foreground, R.string.AppIconVintage),
++        AQUA("AquaIcon", R.drawable.icon_4_background, R.mipmap.icon_foreground, R.string.AppIconAqua),
++        PREMIUM("PremiumIcon", R.drawable.icon_3_background, R.mipmap.icon_3_foreground, R.string.AppIconPremium, true),
++        TURBO("TurboIcon", R.drawable.icon_5_background, R.mipmap.icon_5_foreground, R.string.AppIconTurbo, true),
++        NOX("NoxIcon", R.drawable.icon_2_background, R.mipmap.icon_foreground, R.string.AppIconNox, true);
+ 
+         public final String key;
+         public final int background;
 diff --git a/TMessagesProj/jni/tgnet/ConnectionsManager.cpp b/TMessagesProj/jni/tgnet/ConnectionsManager.cpp
 index edab4e2c2..2582bc2e2 100644
 --- a/TMessagesProj/jni/tgnet/ConnectionsManager.cpp
