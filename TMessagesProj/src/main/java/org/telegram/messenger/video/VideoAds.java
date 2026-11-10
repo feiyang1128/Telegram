@@ -180,58 +180,14 @@ public static VideoAds make(
         this.bulletinFactory = bulletinFactory;
         this.lastTime = System.currentTimeMillis();
         this.first = true;
-        if (cache.loaded) {
-            start_delay = cache.startDelay;
-            between_delay = cache.betweenDelay;
-            ads.addAll(cache.ads);
-            loaded = true;
-            schedule();
-        } else {
-            load();
-        }
+        // Do not restore cached ads or request new ones.
+        cache.ads.clear();
+        ads.clear();
+        loaded = true;
     }
 
     private int requestId;
     private boolean loading, loaded;
-    private void load() {
-        if (loading || loaded) return;
-
-        if (UserConfig.getInstance(currentAccount).isPremium() && MessagesController.getInstance(currentAccount).isSponsoredDisabled()) {
-            return;
-        }
-
-        loading = true;
-
-        TLRPC.TL_messages_getSponsoredMessages req = new TLRPC.TL_messages_getSponsoredMessages();
-        req.peer = MessagesController.getInstance(currentAccount).getInputPeer(dialogId);
-        req.flags |= 1;
-        req.msg_id = msg_id;
-        requestId = ConnectionsManager.getInstance(currentAccount).sendRequest(req, (res, err) -> AndroidUtilities.runOnUIThread(() -> {
-            if (!loading) return;
-
-            if (res instanceof TLRPC.TL_messages_sponsoredMessages) {
-                final TLRPC.TL_messages_sponsoredMessages r = (TLRPC.TL_messages_sponsoredMessages) res;
-                MessagesController.getInstance(currentAccount).putUsers(r.users, false);
-                MessagesController.getInstance(currentAccount).putChats(r.chats, false);
-                ads.addAll(r.messages);
-                start_delay = r.start_delay;
-                between_delay = r.between_delay;
-
-                cache.ads.clear();
-                cache.ads.addAll(r.messages);
-                cache.startDelay = r.start_delay;
-                cache.betweenDelay = r.between_delay;
-            }
-
-            cache.loadTime = System.currentTimeMillis();
-            cache.loaded = true;
-            loaded = true;
-            loading = false;
-
-            schedule();
-        }));
-    }
-
     private void schedule() {
         AndroidUtilities.cancelRunOnUIThread(showRunnable);
         if (!loaded || ads.isEmpty()) return;

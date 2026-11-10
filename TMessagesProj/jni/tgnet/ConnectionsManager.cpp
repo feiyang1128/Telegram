@@ -2748,7 +2748,8 @@ void ConnectionsManager::processRequestQueue(uint32_t connectionTypes, uint32_t 
 
     // Snapshot after retries/migrations, which can remove or requeue requests.
     // No persistent reservations to leak on cancellation or DC changes.
-    DownloadRequestBudget downloadBudget(currentUserPremium);
+    // Use the full local request budget regardless of subscription status.
+    DownloadRequestBudget downloadBudget(true);
     for (const auto &request : runningRequests) {
         if (!request->cancelled && (request->connectionType & 0xffff) == ConnectionTypeDownload) {
             uint32_t datacenterId = request->datacenterId == DEFAULT_DATACENTER_ID ? currentDatacenterId : request->datacenterId;
@@ -2927,10 +2928,8 @@ void ConnectionsManager::processRequestQueue(uint32_t connectionTypes, uint32_t 
                 int max;
                 if (request->isCancelRequest()) {
                     max = MAX_DOWNLOAD_REQUESTS_CANCELS;
-                } else if (currentUserPremium) {
-                    max = MAX_DOWNLOAD_REQUESTS_PREMIUM;
                 } else {
-                    max = MAX_DOWNLOAD_REQUESTS;
+                    max = MAX_DOWNLOAD_REQUESTS_PREMIUM;
                 }
                 if (currentCount >= max) {
                     iter++;

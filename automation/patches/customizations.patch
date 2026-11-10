@@ -1,0 +1,422 @@
+diff --git a/TMessagesProj/jni/tgnet/ConnectionsManager.cpp b/TMessagesProj/jni/tgnet/ConnectionsManager.cpp
+index edab4e2c2..2582bc2e2 100644
+--- a/TMessagesProj/jni/tgnet/ConnectionsManager.cpp
++++ b/TMessagesProj/jni/tgnet/ConnectionsManager.cpp
+@@ -2748,7 +2748,8 @@ void ConnectionsManager::processRequestQueue(uint32_t connectionTypes, uint32_t
+ 
+     // Snapshot after retries/migrations, which can remove or requeue requests.
+     // No persistent reservations to leak on cancellation or DC changes.
+-    DownloadRequestBudget downloadBudget(currentUserPremium);
++    // Use the full local request budget regardless of subscription status.
++    DownloadRequestBudget downloadBudget(true);
+     for (const auto &request : runningRequests) {
+         if (!request->cancelled && (request->connectionType & 0xffff) == ConnectionTypeDownload) {
+             uint32_t datacenterId = request->datacenterId == DEFAULT_DATACENTER_ID ? currentDatacenterId : request->datacenterId;
+@@ -2927,10 +2928,8 @@ void ConnectionsManager::processRequestQueue(uint32_t connectionTypes, uint32_t
+                 int max;
+                 if (request->isCancelRequest()) {
+                     max = MAX_DOWNLOAD_REQUESTS_CANCELS;
+-                } else if (currentUserPremium) {
+-                    max = MAX_DOWNLOAD_REQUESTS_PREMIUM;
+                 } else {
+-                    max = MAX_DOWNLOAD_REQUESTS;
++                    max = MAX_DOWNLOAD_REQUESTS_PREMIUM;
+                 }
+                 if (currentCount >= max) {
+                     iter++;
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/FileLoadOperation.java b/TMessagesProj/src/main/java/org/telegram/messenger/FileLoadOperation.java
+index 70c5e8951..29b75a483 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/FileLoadOperation.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/FileLoadOperation.java
+@@ -856,9 +856,9 @@ public class FileLoadOperation {
+         useDownloadByteBudget = !MessagesController.getInstance(currentAccount).downloadImprovementKillswitch &&
+                 totalBytesCount > 0 && key == null && !encryptFile && !isPreloadVideoOperation && preloadPrefixSize == 0;
+         if (useDownloadByteBudget) {
+-            boolean premium = UserConfig.getInstance(currentAccount).isPremium();
+-            downloadConnectionsCount = premium ? ConnectionsManager.DownloadConnectionsCount : 2;
+-            int byteBudget = (premium ? 16 : 2) * 1024 * 1024;
++            // Use the full local download budget for every account.
++            downloadConnectionsCount = ConnectionsManager.DownloadConnectionsCount;
++            int byteBudget = 16 * 1024 * 1024;
+             currentMaxDownloadRequests = byteBudget / currentDownloadChunkSize;
+         }
+     }
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
+index 9d0077ffc..fd6d21305 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/MessagesController.java
+@@ -1849,6 +1849,7 @@ public class MessagesController extends BaseController implements NotificationCe
+         } else {
+             pendingSuggestions = new HashSet<>();
+         }
++        filterSubscriptionPromotions();
+         if (dismissedSuggestions != null) {
+             dismissedSuggestions = new HashSet<>(dismissedSuggestions);
+         } else {
+@@ -5618,6 +5619,13 @@ public class MessagesController extends BaseController implements NotificationCe
+         }
+     }
+ 
++    private void filterSubscriptionPromotions() {
++        // Filter local promotions without dismissing suggestions on the server.
++        // Keep account security and existing subscription billing reminders.
++        pendingSuggestions.removeAll(Arrays.asList(
++                "PREMIUM_RESTORE", "PREMIUM_CHRISTMAS", "PREMIUM_UPGRADE", "PREMIUM_ANNUAL"));
++    }
++
+     public void removeSuggestion(long did, String suggestion) {
+         if (TextUtils.isEmpty(suggestion)) {
+             return;
+@@ -10990,6 +10998,7 @@ public class MessagesController extends BaseController implements NotificationCe
+                         }
+                         promoDialog = dialogs_dict.get(did);
+                         pendingSuggestions = new HashSet<>(res.pending_suggestions);
++                        filterSubscriptionPromotions();
+                         dismissedSuggestions = new HashSet<>(res.dismissed_suggestions);
+                         customPendingSuggestion = res.custom_pending_suggestion;
+                         getNotificationCenter().postNotificationName(NotificationCenter.newSuggestionsAvailable);
+@@ -21724,101 +21733,7 @@ public class MessagesController extends BaseController implements NotificationCe
+     }
+ 
+     public SponsoredMessagesInfo getSponsoredMessages(long dialogId) {
+-        SponsoredMessagesInfo info = sponsoredMessages.get(dialogId);
+-        if (info != null && (info.loading || Math.abs(SystemClock.elapsedRealtime() - info.loadTime) <= 5 * 60 * 1000)) {
+-            return info;
+-        }
+-        if (dialogId < 0 ? !ChatObject.isChannel(getChat(-dialogId)) : !UserObject.isBot(getUser(dialogId))) {
+-            return null;
+-        }
+-        info = new SponsoredMessagesInfo();
+-        info.loading = true;
+-        sponsoredMessages.put(dialogId, info);
+-        SponsoredMessagesInfo infoFinal = info;
+-        TLRPC.TL_messages_getSponsoredMessages req = new TLRPC.TL_messages_getSponsoredMessages();
+-        req.peer = getInputPeer(dialogId);
+-        getConnectionsManager().sendRequest(req, (response, error) -> {
+-            ArrayList<MessageObject> result;
+-            Integer posts_between;
+-            if (response instanceof TLRPC.messages_SponsoredMessages) {
+-                TLRPC.messages_SponsoredMessages res = (TLRPC.messages_SponsoredMessages) response;
+-                if (res.messages.isEmpty()) {
+-                    result = null;
+-                    posts_between = null;
+-                } else {
+-                    if (res instanceof TLRPC.TL_messages_sponsoredMessages && (res.flags & 0x1) > 0) {
+-                        posts_between = res.posts_between;
+-                    } else {
+-                        posts_between = null;
+-                    }
+-                    result = new ArrayList<>();
+-                    AndroidUtilities.runOnUIThread(() -> {
+-                        putUsers(res.users, false);
+-                        putChats(res.chats, false);
+-                    });
+-                    final LongSparseArray<TLRPC.User> usersDict = new LongSparseArray<>();
+-                    final LongSparseArray<TLRPC.Chat> chatsDict = new LongSparseArray<>();
+-
+-                    for (int a = 0; a < res.users.size(); a++) {
+-                        TLRPC.User u = res.users.get(a);
+-                        usersDict.put(u.id, u);
+-                    }
+-                    for (int a = 0; a < res.chats.size(); a++) {
+-                        TLRPC.Chat c = res.chats.get(a);
+-                        chatsDict.put(c.id, c);
+-                    }
+-
+-                    int messageId = -10000000;
+-                    for (int a = 0, N = res.messages.size(); a < N; a++) {
+-                        TLRPC.TL_sponsoredMessage sponsoredMessage = res.messages.get(a);
+-                        TLRPC.TL_message message = new TLRPC.TL_message();
+-                        if (!sponsoredMessage.entities.isEmpty()) {
+-                            message.entities = sponsoredMessage.entities;
+-                            message.flags |= 128;
+-                        }
+-                        message.peer_id = getPeer(dialogId);
+-                        message.flags |= 256;
+-                        message.date = getConnectionsManager().getCurrentTime();
+-                        message.id = messageId--;
+-                        message.message = sponsoredMessage.message;
+-                        if (sponsoredMessage.media != null) {
+-                            message.flags |= 512;
+-                        }
+-                        message.media = sponsoredMessage.media;
+-                        MessageObject messageObject = new MessageObject(currentAccount, message, usersDict, chatsDict, true, true);
+-                        messageObject.sponsoredId = sponsoredMessage.random_id;
+-                        messageObject.sponsoredTitle = sponsoredMessage.title;
+-                        messageObject.sponsoredUrl = sponsoredMessage.url;
+-                        messageObject.sponsoredRecommended = sponsoredMessage.recommended;
+-                        messageObject.sponsoredPhoto = sponsoredMessage.photo;
+-                        messageObject.sponsoredInfo = sponsoredMessage.sponsor_info;
+-                        messageObject.sponsoredAdditionalInfo = sponsoredMessage.additional_info;
+-                        messageObject.sponsoredButtonText = sponsoredMessage.button_text;
+-                        messageObject.sponsoredCanReport = sponsoredMessage.can_report;
+-                        messageObject.sponsoredColor = sponsoredMessage.color;
+-                        messageObject.sponsoredMedia = sponsoredMessage.media;
+-                        messageObject.setType();
+-                        messageObject.textLayoutBlocks = new ArrayList<>();
+-                        messageObject.generateThumbs(true);
+-                        result.add(messageObject);
+-                    }
+-                }
+-            } else {
+-                result = null;
+-                posts_between = null;
+-            }
+-            AndroidUtilities.runOnUIThread(() -> {
+-                if (result == null) {
+-                    sponsoredMessages.remove(dialogId);
+-                } else {
+-                    infoFinal.loadTime = SystemClock.elapsedRealtime();
+-                    infoFinal.loading = false;
+-                    infoFinal.messages = result;
+-                    infoFinal.posts_between = posts_between;
+-                    getNotificationCenter().postNotificationName(NotificationCenter.didLoadSponsoredMessages, dialogId, result);
+-                }
+-            });
+-        });
++        // Sponsored messages are disabled in this client.
+         return null;
+     }
+ 
+diff --git a/TMessagesProj/src/main/java/org/telegram/messenger/video/VideoAds.java b/TMessagesProj/src/main/java/org/telegram/messenger/video/VideoAds.java
+index c9dce56d3..bb93815b3 100644
+--- a/TMessagesProj/src/main/java/org/telegram/messenger/video/VideoAds.java
++++ b/TMessagesProj/src/main/java/org/telegram/messenger/video/VideoAds.java
+@@ -180,58 +180,14 @@ public static VideoAds make(
+         this.bulletinFactory = bulletinFactory;
+         this.lastTime = System.currentTimeMillis();
+         this.first = true;
+-        if (cache.loaded) {
+-            start_delay = cache.startDelay;
+-            between_delay = cache.betweenDelay;
+-            ads.addAll(cache.ads);
+-            loaded = true;
+-            schedule();
+-        } else {
+-            load();
+-        }
++        // Do not restore cached ads or request new ones.
++        cache.ads.clear();
++        ads.clear();
++        loaded = true;
+     }
+ 
+     private int requestId;
+     private boolean loading, loaded;
+-    private void load() {
+-        if (loading || loaded) return;
+-
+-        if (UserConfig.getInstance(currentAccount).isPremium() && MessagesController.getInstance(currentAccount).isSponsoredDisabled()) {
+-            return;
+-        }
+-
+-        loading = true;
+-
+-        TLRPC.TL_messages_getSponsoredMessages req = new TLRPC.TL_messages_getSponsoredMessages();
+-        req.peer = MessagesController.getInstance(currentAccount).getInputPeer(dialogId);
+-        req.flags |= 1;
+-        req.msg_id = msg_id;
+-        requestId = ConnectionsManager.getInstance(currentAccount).sendRequest(req, (res, err) -> AndroidUtilities.runOnUIThread(() -> {
+-            if (!loading) return;
+-
+-            if (res instanceof TLRPC.TL_messages_sponsoredMessages) {
+-                final TLRPC.TL_messages_sponsoredMessages r = (TLRPC.TL_messages_sponsoredMessages) res;
+-                MessagesController.getInstance(currentAccount).putUsers(r.users, false);
+-                MessagesController.getInstance(currentAccount).putChats(r.chats, false);
+-                ads.addAll(r.messages);
+-                start_delay = r.start_delay;
+-                between_delay = r.between_delay;
+-
+-                cache.ads.clear();
+-                cache.ads.addAll(r.messages);
+-                cache.startDelay = r.start_delay;
+-                cache.betweenDelay = r.between_delay;
+-            }
+-
+-            cache.loadTime = System.currentTimeMillis();
+-            cache.loaded = true;
+-            loaded = true;
+-            loading = false;
+-
+-            schedule();
+-        }));
+-    }
+-
+     private void schedule() {
+         AndroidUtilities.cancelRunOnUIThread(showRunnable);
+         if (!loaded || ads.isEmpty()) return;
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Adapters/DialogsSearchAdapter.java b/TMessagesProj/src/main/java/org/telegram/ui/Adapters/DialogsSearchAdapter.java
+index 46ea8f004..a74bd8322 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Adapters/DialogsSearchAdapter.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Adapters/DialogsSearchAdapter.java
+@@ -1125,34 +1125,12 @@ public class DialogsSearchAdapter extends RecyclerListView.SelectionAdapter {
+             query = null;
+         }
+         filterRecent(query);
+-        if (!TextUtils.equals(sponsoredQuery, query)) {
+-            sponsoredQuery = query;
+-            sponsoredPeers.clear();
+-            if (sponsoredReqId != 0) {
+-                ConnectionsManager.getInstance(currentAccount).cancelRequest(sponsoredReqId, true);
+-                sponsoredReqId = 0;
+-            }
+-            if (query == null || query.length() < 4 || UserConfig.getInstance(currentAccount).isPremium() && MessagesController.getInstance(currentAccount).isSponsoredDisabled()) {
+-                sponsoredQuery = null;
+-            } else {
+-                final TLRPC.TL_contacts_getSponsoredPeers req = new TLRPC.TL_contacts_getSponsoredPeers();
+-                req.q = sponsoredQuery = query;
+-                sponsoredReqId = ConnectionsManager.getInstance(currentAccount).sendRequest(req, (res, err) -> AndroidUtilities.runOnUIThread(() -> {
+-                    sponsoredReqId = 0;
+-                    if (res instanceof TLRPC.TL_contacts_sponsoredPeersEmpty) {
+-                        if (!sponsoredPeers.isEmpty()) {
+-                            sponsoredPeers.clear();
+-                            notifyDataSetChanged();
+-                        }
+-                    } else if (res instanceof TLRPC.TL_contacts_sponsoredPeers) {
+-                        final TLRPC.TL_contacts_sponsoredPeers r = (TLRPC.TL_contacts_sponsoredPeers) res;
+-                        MessagesController.getInstance(currentAccount).putUsers(r.users, true);
+-                        MessagesController.getInstance(currentAccount).putChats(r.chats, true);
+-                        sponsoredPeers.addAll(r.peers);
+-                        notifyDataSetChanged();
+-                    }
+-                }));
+-            }
++        // Keep ordinary search results, without sponsored peers.
++        sponsoredQuery = null;
++        sponsoredPeers.clear();
++        if (sponsoredReqId != 0) {
++            ConnectionsManager.getInstance(currentAccount).cancelRequest(sponsoredReqId, true);
++            sponsoredReqId = 0;
+         }
+         if (TextUtils.isEmpty(query)) {
+             filteredRecentQuery = null;
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/Cells/AppIconsSelectorCell.java b/TMessagesProj/src/main/java/org/telegram/ui/Cells/AppIconsSelectorCell.java
+index 291afe9ef..1658eceda 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/Cells/AppIconsSelectorCell.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/Cells/AppIconsSelectorCell.java
+@@ -9,8 +9,6 @@ import android.graphics.Paint;
+ import android.graphics.Path;
+ import android.graphics.Rect;
+ import android.graphics.drawable.Drawable;
+-import android.text.Spannable;
+-import android.text.SpannableString;
+ import android.util.DisplayMetrics;
+ import android.util.TypedValue;
+ import android.view.Gravity;
+@@ -30,21 +28,16 @@ import androidx.recyclerview.widget.RecyclerView;
+ import org.telegram.messenger.AndroidUtilities;
+ import org.telegram.messenger.FileLog;
+ import org.telegram.messenger.LocaleController;
+-import org.telegram.messenger.MessagesController;
+ import org.telegram.messenger.NotificationCenter;
+ import org.telegram.messenger.R;
+-import org.telegram.messenger.UserConfig;
+ import org.telegram.ui.ActionBar.BaseFragment;
+ import org.telegram.ui.ActionBar.Theme;
+ import org.telegram.ui.ActionBar.ThemeBind;
+ import org.telegram.ui.Components.Bulletin;
+-import org.telegram.ui.Components.ColoredImageSpan;
+ import org.telegram.ui.Components.Easings;
+ import org.telegram.ui.Components.LayoutHelper;
+-import org.telegram.ui.Components.Premium.PremiumFeatureBottomSheet;
+ import org.telegram.ui.Components.RecyclerListView;
+ import org.telegram.ui.LauncherIconController;
+-import org.telegram.ui.PremiumPreviewFragment;
+ 
+ import java.util.ArrayList;
+ import java.util.Arrays;
+@@ -111,10 +104,6 @@ public class AppIconsSelectorCell extends RecyclerListView implements Notificati
+         setOnItemClickListener((view, position) -> {
+             IconHolderView holderView = (IconHolderView) view;
+             LauncherIconController.LauncherIcon icon = availableIcons.get(position);
+-            if (icon.premium && !UserConfig.hasPremiumOnAccounts()) {
+-                fragment.showDialog(new PremiumFeatureBottomSheet(fragment, PremiumPreviewFragment.PREMIUM_FEATURE_APPLICATION_ICONS, true));
+-                return;
+-            }
+ 
+             if (LauncherIconController.isEnabled(icon)) {
+                 return;
+@@ -153,14 +142,6 @@ public class AppIconsSelectorCell extends RecyclerListView implements Notificati
+     private void updateIconsVisibility() {
+         availableIcons.clear();
+         availableIcons.addAll(Arrays.asList(LauncherIconController.LauncherIcon.values()));
+-        if (MessagesController.getInstance(currentAccount).premiumFeaturesBlocked()) {
+-            for (int i = 0; i < availableIcons.size(); i++) {
+-                if (availableIcons.get(i).premium) {
+-                    availableIcons.remove(i);
+-                    i--;
+-                }
+-            }
+-        }
+         getAdapter().notifyDataSetChanged();
+         invalidateItemDecorations();
+ 
+@@ -291,19 +272,9 @@ public class AppIconsSelectorCell extends RecyclerListView implements Notificati
+             iconView.setImageResource(icon.background);
+ 
+             MarginLayoutParams params = (MarginLayoutParams) titleView.getLayoutParams();
+-            if (icon.premium && !UserConfig.hasPremiumOnAccounts()) {
+-                SpannableString str = new SpannableString("d " + LocaleController.getString(icon.title));
+-                ColoredImageSpan span = new ColoredImageSpan(R.drawable.msg_mini_premiumlock);
+-                span.setTopOffset(1);
+-                span.setSize(AndroidUtilities.dp(13));
+-                str.setSpan(span, 0, 1, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+-
+-                params.rightMargin = AndroidUtilities.dp(4);
+-                titleView.setText(str);
+-            } else {
+-                params.rightMargin = 0;
+-                titleView.setText(LocaleController.getString(icon.title));
+-            }
++            params.rightMargin = 0;
++            titleView.setText(LocaleController.getString(icon.title));
++
+             setSelected(LauncherIconController.isEnabled(icon), false);
+         }
+     }
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
+index def777a25..8c6e6d315 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/LaunchActivity.java
+@@ -6104,6 +6104,10 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+ 
+     private boolean firstAppUpdateCheck = true;
+     public void checkAppUpdate(boolean force, Browser.Progress progress) {
++        if (org.telegram.messenger.ForkUpdater.isEnabled()) {
++            org.telegram.messenger.ForkUpdater.check(this, force, progress);
++            return;
++        }
+         if (!ApplicationLoader.isStandaloneBuild() && !ApplicationLoader.isBetaBuild()) {
+             return;
+         }
+@@ -7261,7 +7265,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
+         }
+         if (UserConfig.getInstance(UserConfig.selectedAccount).unacceptedTermsOfService != null) {
+             showTosActivity(UserConfig.selectedAccount, UserConfig.getInstance(UserConfig.selectedAccount).unacceptedTermsOfService);
+-        } else if (SharedConfig.pendingAppUpdate != null && SharedConfig.pendingAppUpdate.can_not_skip) {
++        } else if (!org.telegram.messenger.ForkUpdater.isEnabled() && SharedConfig.pendingAppUpdate != null && SharedConfig.pendingAppUpdate.can_not_skip) {
+             showUpdateActivity(UserConfig.selectedAccount, SharedConfig.pendingAppUpdate, true);
+         }
+         checkAppUpdate(false, null);
+diff --git a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+index e2b917be3..cdb6563c7 100644
+--- a/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
++++ b/TMessagesProj/src/main/java/org/telegram/ui/SettingsActivity.java
+@@ -812,7 +812,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+             items.add(UItem.asShadow(null));
+         }
+ 
+-        if (!getMessagesController().premiumFeaturesBlocked()) {
++        if (getUserConfig().isPremium() && !getMessagesController().premiumFeaturesBlocked()) {
+             items.add(SettingCell.Factory.of(11, 0xFFB659FF, 0xFF617CFF, R.drawable.settings_premium, getString(R.string.TelegramPremium)));
+         }
+         if (getMessagesController().starsPurchaseAvailable()) {
+@@ -827,7 +827,7 @@ public class SettingsActivity extends BaseFragment implements NotificationCenter
+             items.add(SettingCell.Factory.of(13, 0xFF1BA4ED, 0xFF1488E1, R.drawable.filled_gram_earnings, getString(R.string.GramEarnings), null, c.balanceAvailable() && balance > 0 ? StarsIntroActivity.formatStarsAmount(c.getBalance(), 0.85f, ' ') : ""));
+         }
+ 
+-        if (!getMessagesController().premiumFeaturesBlocked()) {
++        if (getUserConfig().isPremium() && !getMessagesController().premiumFeaturesBlocked()) {
+             items.add(SettingCell.Factory.of(15, 0xFFF45255, 0xFFDF3955, R.drawable.settings_business, getString(R.string.TelegramBusiness)));
+         }
+         if (!getMessagesController().premiumPurchaseBlocked()) {
