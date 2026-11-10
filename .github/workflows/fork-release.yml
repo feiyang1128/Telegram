@@ -29,6 +29,11 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       UPSTREAM_REF: ${{ inputs.upstream_ref || 'master' }}
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_COMPILERCHECK: content
+      CCACHE_MAXSIZE: 2G
     steps:
       - uses: actions/checkout@v4
         with:
@@ -133,6 +138,26 @@ jobs:
         if: steps.existing.outputs.exists == 'false'
         with:
           packages: platform-tools
+      - name: Install native compiler cache
+        if: steps.existing.outputs.exists == 'false'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y ccache
+          ccache --version
+      - name: Restore native compiler cache
+        id: native-cache
+        if: steps.existing.outputs.exists == 'false'
+        uses: actions/cache/restore@v4
+        with:
+          # ccache checks sources, headers, flags and compiler content itself.
+          # Keep each successful build's additions under a new immutable key.
+          path: ${{ env.CCACHE_DIR }}
+          key: native-ccache-${{ runner.os }}-${{ runner.arch }}-ndk27.2.12479018-cmake3.22.1-arm64-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            native-ccache-${{ runner.os }}-${{ runner.arch }}-ndk27.2.12479018-cmake3.22.1-arm64-v1-
+      - name: Initialize native compiler cache statistics
+        if: steps.existing.outputs.exists == 'false'
+        run: ccache --zero-stats
       - name: Install Android toolchain
         if: steps.existing.outputs.exists == 'false'
         run: |
@@ -163,6 +188,25 @@ jobs:
           bash gradlew :TMessagesProj_AppStandalone:assembleAfatStandalone \
             -PAPP_VERSION_CODE="$BASE_CODE" -PAPP_VERSION_NAME="$VERSION_NAME" \
             '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g' --max-workers=2 --no-daemon
+      - name: Verify native compiler cache integration
+        if: success() && steps.existing.outputs.exists == 'false'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          builds = list(Path('source').rglob('build.ninja'))
+          if not any('ccache' in path.read_text() for path in builds):
+              raise SystemExit('CMake did not configure ccache in any Ninja build')
+          print('Verified ccache in generated Ninja compiler commands')
+          PY
+      - name: Show native compiler cache statistics
+        if: always() && steps.existing.outputs.exists == 'false' && steps.native-cache.outcome == 'success'
+        run: ccache --show-stats
+      - name: Save native compiler cache
+        if: success() && steps.existing.outputs.exists == 'false'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
       - name: Verify APK and publish release
         if: steps.existing.outputs.exists == 'false'
         env:

@@ -61,6 +61,8 @@ Gradle 依赖缓存仅包含 `~/.gradle/caches/modules-2` 和 `~/.gradle/wrapper
 
 ## 维护补丁
 
+C/C++ 编译使用 `ccache`，通过 CMake 的 C/C++ compiler launcher 环境变量启用。缓存只包含原生编译缓存，不保存 APK、Java 编译输出、签名文件或 Gradle 项目输出。缓存上限 2 GB，按系统、架构、NDK 和 CMake 版本隔离；每次成功编译后保存新快照，发布失败也不会丢失已保存的编译缓存。保留默认源码、头文件、参数和工作目录校验，编译器按内容校验，不启用宽松匹配。首次构建建立缓存，后续构建可在 `Show native compiler cache statistics` 步骤查看命中率；链接、压缩和签名仍需执行。若需废弃旧缓存，递增工作流缓存键中的 `arm64-v1` 后缀。
+
 `automation/patches/customizations.patch` 保存本次定制（广告、下载、图标、推广与更新入口）。`automation/ForkUpdater.java` 是更新器的权威副本，同时在本地应用源码中保留副本。修改更新器时同步两个文件；构建脚本会把 automation 中的副本复制到上游源码。
 
 上游重构后需要人工迁移改动，重新生成补丁并检查每项功能，随后等待新的上游版本号发布。补丁应用成功、编译成功不能代替实机验证。
