@@ -193,9 +193,14 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          builds = list(Path('source').rglob('build.ninja'))
-          if not any('ccache' in path.read_text() for path in builds):
+          # CMake puts compiler commands in CMakeFiles/rules.ninja;
+          # build.ninja normally only includes that file.
+          builds = list(Path('source').rglob('*.ninja'))
+          matches = [path for path in builds if 'ccache' in path.read_text()]
+          if not matches:
               raise SystemExit('CMake did not configure ccache in any Ninja build')
+          for path in matches:
+              print(path)
           print('Verified ccache in generated Ninja compiler commands')
           PY
       - name: Show native compiler cache statistics
