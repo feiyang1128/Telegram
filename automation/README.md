@@ -49,7 +49,9 @@ Firebase 可在 https://console.firebase.google.com 创建项目，注册与最�
 
 工作流在临时 source 目录构建，**不会自动覆盖 Fork 的 master 源码**。Release 记录官方提交、自动化提交、子模块版本，并附公开补丁和更新器源码；完整构建配置在本仓库。读取这两份提交及补丁可定位对应源代码。API 凭据和证书只在构建时注入，不放入发布附件。
 
-版本名称完全沿用官方 APP_VERSION_NAME，不添加 fork 后缀。Android versionCode 同样沿用官方 Standalone afat 构建规则：`官方 APP_VERSION_CODE × 10 + 9`。例如官方 13.2.1 / 7291 对应显示版本 13.2.1、安装包内部版本 72919。Release 标签为 `fork-<versionCode>`，APK 为 `fork-<versionCode>-arm64.apk`；这里的 fork 仅用于标识发布文件，不改变 App 版本。工作流不再读取 FORK_REVISION。同一官方版本不会自动重复发布或触发手机端升级提示。同一包名始终使用同一证书，不要降低版本号或更换签名。如果曾安装旧规则生成的高版本号 APK，需要先处理数据备份和重装，不能直接降级覆盖。
+版本名称完全沿用官方 APP_VERSION_NAME，不添加 fork 后缀。Android versionCode 为 `(官方 APP_VERSION_CODE × 100 + 定制修订号) × 10 + 9`，保留 Standalone afat 的末位规则。修订号保存在 `automation/revision.txt`，范围 0–99；同一官方版本需要发布定制修改时，递增该文件并提交。例：官方 13.2.1 / 7291、修订号 1，对应显示版本 13.2.1、内部版本 7291019，高于旧规则的 72919。修订号不变时仍跳过已发布版本；官方版本提高时会自动发布，无需修改修订号，也无需修改上游拉取流程。不要在同一官方版本内降低修订号；达到 99 后需调整版本规则或等待上游版本提高。
+
+Release 标签为 `fork-<versionCode>`，APK 为 `fork-<versionCode>-arm64.apk`，手机更新器继续按内部版本号比较更新。同一包名始终使用同一证书，不要降低版本号或更换签名。切换到新规则后，旧规则 APK 无法直接覆盖安装新规则 APK。
 
 手机端通过公开 GitHub Releases API 查询最新正式 Release，最多每 6 小时自动检查一次。发现更大版本号及匹配 APK 后提示用户，在浏览器下载，由系统执行安装并验证签名。它不会静默安装，也不依赖在 App 中保存 GitHub Token。仓库和 Releases 需要公开；GitHub 无法访问或 API 限流时，自动检查静默失败，手动检查显示错误，不影响聊天。
 

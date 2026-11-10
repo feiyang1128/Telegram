@@ -52,8 +52,11 @@ jobs:
           props = Path('source/gradle.properties').read_text()
           upstream = int(re.search(r'^APP_VERSION_CODE=(\d+)$', props, re.M)[1])
           name = re.search(r'^APP_VERSION_NAME=(.+)$', props, re.M)[1].strip()
-          # Preserve upstream's standalone afat versionCode convention.
-          base = upstream
+          # Reserve two digits for fork revisions, retaining afat's final digit.
+          revision = int(Path('automation-repo/automation/revision.txt').read_text().strip())
+          if not 0 <= revision <= 99:
+              raise ValueError('Fork revision must be between 0 and 99')
+          base = upstream * 100 + revision
           code = base * 10 + 9
           if code > 2100000000:
               raise ValueError('Version code exceeds Android limit')
@@ -107,6 +110,7 @@ jobs:
           cp automation-repo/automation/patches/customizations.patch dist/customizations.patch
           cp automation-repo/automation/ForkUpdater.java dist/ForkUpdater.java
           cp automation-repo/automation/prepare_build.py dist/prepare_build.py
+          cp automation-repo/automation/revision.txt dist/revision.txt
           git -C automation-repo rev-parse HEAD > dist/automation-commit.txt
       - uses: actions/setup-java@v4
         if: steps.existing.outputs.exists == 'false'
