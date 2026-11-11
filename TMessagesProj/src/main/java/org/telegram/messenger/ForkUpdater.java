@@ -10,6 +10,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.telegram.messenger.browser.Browser;
 import org.telegram.ui.ActionBar.AlertDialog;
+import org.telegram.ui.Components.ForkUpdateSheet;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
@@ -45,6 +46,8 @@ public final class ForkUpdater {
         Utilities.globalQueue.postRunnable(() -> {
             String download = null;
             String version = null;
+            String changelog = null;
+            long downloadSize = 0;
             String error = null;
             HttpURLConnection connection = null;
             try {
@@ -79,6 +82,8 @@ public final class ForkUpdater {
                         if (name.equals(asset.optString("name")) && expected.equals(asset.optString("browser_download_url"))) {
                             download = expected;
                             version = release.optString("name", tag);
+                            changelog = release.optString("body");
+                            downloadSize = asset.optLong("size");
                             break;
                         }
                     }
@@ -92,17 +97,16 @@ public final class ForkUpdater {
             }
             final String url = download;
             final String title = version;
+            final String changes = changelog;
+            final long size = downloadSize;
             final String failure = error;
             AndroidUtilities.runOnUIThread(() -> {
                 checking.set(false);
                 if (progress != null) progress.end();
                 if (cancelled.get() || activity.isFinishing() || activity.isDestroyed()) return;
                 if (url != null) {
-                    new AlertDialog.Builder(activity)
-                            .setTitle("发现新版本")
-                            .setMessage(title + "\n从 " + REPOSITORY + " 下载更新，安装时由系统验证签名。")
-                            .setPositiveButton("下载更新", (dialog, which) -> downloadUpdate(activity, url, title))
-                            .setNegativeButton("稍后", null).show();
+                    new ForkUpdateSheet(activity, title, size, changes,
+                            () -> downloadUpdate(activity, url, title)).show();
                 } else if (force) {
                     Toast.makeText(activity, failure != null ? failure : "当前已是最新版本", Toast.LENGTH_LONG).show();
                 }
