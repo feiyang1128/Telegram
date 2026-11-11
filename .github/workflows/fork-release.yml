@@ -3,9 +3,6 @@ name: Build fork release
 on:
   push:
     branches: [master]
-    paths:
-      - '.github/workflows/fork-release.yml'
-      - 'automation/**'
   workflow_dispatch:
     inputs:
       upstream_ref:
@@ -39,11 +36,13 @@ jobs:
         with:
           path: automation-repo
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Fetch official source and identify version
-        id: version
+      - name: Test release version planning
+        run: python -m unittest discover -s automation-repo/automation -p test_plan_release.py
+      - name: Fetch official source
         shell: bash
         run: |
           set -euo pipefail
@@ -51,40 +50,14 @@ jobs:
           git -C source remote add origin https://github.com/DrKLO/Telegram.git
           git -C source fetch origin "$UPSTREAM_REF"
           git -C source checkout --detach FETCH_HEAD
-          python - <<'PY'
-          import os, re
-          from pathlib import Path
-          props = Path('source/gradle.properties').read_text()
-          upstream = int(re.search(r'^APP_VERSION_CODE=(\d+)$', props, re.M)[1])
-          name = re.search(r'^APP_VERSION_NAME=(.+)$', props, re.M)[1].strip()
-          # Reserve two digits for fork revisions, retaining afat's final digit.
-          revision = int(Path('automation-repo/automation/revision.txt').read_text().strip())
-          if not 0 <= revision <= 99:
-              raise ValueError('Fork revision must be between 0 and 99')
-          base = upstream * 100 + revision
-          code = base * 10 + 9
-          if code > 2100000000:
-              raise ValueError('Version code exceeds Android limit')
-          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
-              out.write(f'base={base}\ncode={code}\nname={name}\ntag=fork-{code}\n')
-          PY
-      - name: Skip versions already published
-        id: existing
+      - name: Generate source patch and plan release
+        id: version
         env:
-          TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          # Distinguish a missing release from authentication/network failures.
-          status=$(curl --silent --show-error --output release.json --write-out '%{http_code}' \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$TAG")
-          case "$status" in
-            200) echo 'exists=true' >> "$GITHUB_OUTPUT" ;;
-            404) echo 'exists=false' >> "$GITHUB_OUTPUT" ;;
-            *) echo "Release lookup failed: HTTP $status"; exit 1 ;;
-          esac
+          APP_PACKAGE: ${{ vars.APP_PACKAGE || 'io.github.feiyang.messenger' }}
+          ENABLE_PASSKEYS: ${{ vars.ENABLE_PASSKEYS || 'false' }}
+        run: python automation-repo/automation/plan_release.py
       - name: Validate required configuration
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
@@ -101,29 +74,28 @@ jobs:
           if missing: raise SystemExit('Configure GitHub Secrets: ' + ', '.join(missing))
           PY
       - name: Apply customizations and initialize submodules
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         run: |
           set -euo pipefail
-          git -C source apply --3way --index ../automation-repo/automation/patches/customizations.patch
+          git -C source apply --3way --index ../generated-customizations.patch
           git -C source diff --cached --check
-          cp automation-repo/automation/ForkUpdater.java source/TMessagesProj/src/main/java/org/telegram/messenger/ForkUpdater.java
           git -C source submodule update --init --recursive --depth=1 --jobs=4
           mkdir -p dist
           # Record reproducible public inputs before injecting any secrets.
           git -C source rev-parse HEAD > dist/upstream-commit.txt
           git -C source submodule status --recursive > dist/submodules.txt
-          cp automation-repo/automation/patches/customizations.patch dist/customizations.patch
-          cp automation-repo/automation/ForkUpdater.java dist/ForkUpdater.java
+          cp generated-customizations.patch dist/customizations.patch
+          cp source/TMessagesProj/src/main/java/org/telegram/messenger/ForkUpdater.java dist/ForkUpdater.java
           cp automation-repo/automation/prepare_build.py dist/prepare_build.py
           cp automation-repo/automation/revision.txt dist/revision.txt
           git -C automation-repo rev-parse HEAD > dist/automation-commit.txt
       - uses: actions/setup-java@v4
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         with:
           distribution: temurin
           java-version: '17'
       - name: Restore Gradle dependencies
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         uses: actions/cache@v4
         with:
           # Only downloaded dependencies and distributions; no compiled classes,
@@ -135,18 +107,18 @@ jobs:
           restore-keys: |
             gradle-deps-${{ runner.os }}-jdk17-v1-
       - uses: android-actions/setup-android@v3
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         with:
           packages: platform-tools
       - name: Install native compiler cache
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y ccache
           ccache --version
       - name: Restore native compiler cache
         id: native-cache
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         uses: actions/cache/restore@v4
         with:
           # ccache checks sources, headers, flags and compiler content itself.
@@ -156,14 +128,14 @@ jobs:
           restore-keys: |
             native-ccache-${{ runner.os }}-${{ runner.arch }}-ndk27.2.12479018-cmake3.22.1-arm64-v1-
       - name: Initialize native compiler cache statistics
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         run: ccache --zero-stats
       - name: Install Android toolchain
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         run: |
           sdkmanager 'platform-tools' 'platforms;android-36' 'build-tools;36.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Inject private build configuration
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         env:
           TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
           TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
@@ -176,7 +148,7 @@ jobs:
           ENABLE_PASSKEYS: ${{ vars.ENABLE_PASSKEYS || 'false' }}
         run: python automation-repo/automation/prepare_build.py source
       - name: Compile signed arm64 APK
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         working-directory: source
         env:
           ORG_GRADLE_PROJECT_RELEASE_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
@@ -189,7 +161,7 @@ jobs:
             -PAPP_VERSION_CODE="$BASE_CODE" -PAPP_VERSION_NAME="$VERSION_NAME" \
             '-Dorg.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g' --max-workers=2 --no-daemon
       - name: Verify native compiler cache integration
-        if: success() && steps.existing.outputs.exists == 'false'
+        if: success() && steps.version.outputs.exists == 'false'
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -204,20 +176,21 @@ jobs:
           print('Verified ccache in generated Ninja compiler commands')
           PY
       - name: Show native compiler cache statistics
-        if: always() && steps.existing.outputs.exists == 'false' && steps.native-cache.outcome == 'success'
+        if: always() && steps.version.outputs.exists == 'false' && steps.native-cache.outcome == 'success'
         run: ccache --show-stats
       - name: Save native compiler cache
-        if: success() && steps.existing.outputs.exists == 'false'
+        if: success() && steps.version.outputs.exists == 'false'
         uses: actions/cache/save@v4
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
       - name: Verify APK and publish release
-        if: steps.existing.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false'
         env:
           CODE: ${{ steps.version.outputs.code }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION_NAME: ${{ steps.version.outputs.name }}
+          BUILD_FINGERPRINT: ${{ steps.version.outputs.fingerprint }}
         run: |
           set -euo pipefail
           mapfile -t apks < <(find source/TMessagesProj_AppStandalone/build/outputs/apk -type f -name '*.apk')
@@ -229,6 +202,7 @@ jobs:
           (cd dist && sha256sum *.apk > SHA256SUMS)
           printf 'Upstream: %s\nAutomation: %s\n\nArm64 only. Download and install to update; Android verifies the signing identity.\nSource: official commit + attached patch and updater; CI configuration is in this repository.\n' \
             "$(cat dist/upstream-commit.txt)" "$(cat dist/automation-commit.txt)" > notes.md
+          printf '\nBuild fingerprint: %s\n' "$BUILD_FINGERPRINT" >> notes.md
           gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" --title "$VERSION_NAME" --notes-file notes.md
       - name: Remove injected credentials

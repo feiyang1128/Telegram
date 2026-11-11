@@ -5,6 +5,7 @@ obj/
 *.iml
 local.properties
 .signing/
+__pycache__/
 *.jks
 *.p12
 *.keystore.base64

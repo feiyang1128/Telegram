@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import sys
 
 
@@ -39,7 +38,6 @@ def main():
         text = replace_once(text, rf"public static (?:int|String|boolean) {field}\s*=\s*[^;]+;",
                             f"public static {'int' if field == 'APP_ID' else 'String' if field == 'APP_HASH' else 'boolean'} {field} = {value};")
     buildvars.write_text(text, encoding="utf-8")
-    shutil.copyfile(Path(__file__).with_name("ForkUpdater.java"), java / "ForkUpdater.java")
     keystore = root / "TMessagesProj/config/release.keystore"
     keystore_data = base64.b64decode(os.environ["SIGNING_KEYSTORE_BASE64"], validate=True)
     store_type = "JKS" if keystore_data[:4] == bytes.fromhex("feedfeed") else "PKCS12"

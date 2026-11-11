@@ -43,13 +43,13 @@ Firebase 可在 https://console.firebase.google.com 创建项目，注册与最�
 
 ## 自动更新流程
 
-每 6 小时检查官方 master 的 APP_VERSION_CODE。当前没有额外要求上游必须创建 GitHub Release；官方只改代码而未提高版本号时不重复发布。也可手动输入官方分支、标签或提交。已存在的 fork 版本会跳过。
+master 每次推送都会触发检查，也每 6 小时检查官方 master。根据上游提交、仓库应用改动、构建脚本和公开构建参数计算指纹；只有最新正式版本已包含相同内容且存在 APK 时才跳过。上游代码变化而版本号不变，也会发布新修订。也可手动输入官方分支、标签或提交。Secrets 变化不计入公开指纹，需要提高最低修订号来触发重新发布。
 
 流程依次拉取源码、严格应用补丁、初始化子模块、注入私密配置、编译 arm64 Standalone APK、验证签名及版本号并发布 Release。补丁冲突、缺少配置或构建失败都会终止，旧 Release 保留。不会自动猜测如何修复上游重构。
 
 工作流在临时 source 目录构建，**不会自动覆盖 Fork 的 master 源码**。Release 记录官方提交、自动化提交、子模块版本，并附公开补丁和更新器源码；完整构建配置在本仓库。读取这两份提交及补丁可定位对应源代码。API 凭据和证书只在构建时注入，不放入发布附件。
 
-版本名称完全沿用官方 APP_VERSION_NAME，不添加 fork 后缀。Android versionCode 为 `(官方 APP_VERSION_CODE × 100 + 定制修订号) × 10 + 9`，保留 Standalone afat 的末位规则。修订号保存在 `automation/revision.txt`，范围 0–99；同一官方版本需要发布定制修改时，递增该文件并提交。例：官方 13.2.1 / 7291、修订号 1，对应显示版本 13.2.1、内部版本 7291019，高于旧规则的 72919。修订号不变时仍跳过已发布版本；官方版本提高时会自动发布，无需修改修订号，也无需修改上游拉取流程。不要在同一官方版本内降低修订号；达到 99 后需调整版本规则或等待上游版本提高。
+版本名称完全沿用官方 APP_VERSION_NAME，不添加 fork 后缀。Android versionCode 为 `(官方 APP_VERSION_CODE × 100 + 定制修订号) × 10 + 9`，保留 Standalone afat 的末位规则。`automation/revision.txt` 是最低修订号，范围 0–99；实际修订号根据已有 Releases 自动递增，不需要每次手动修改。例：官方 13.2.1 / 7291、修订号 1，对应显示版本 13.2.1、内部版本 7291019，高于旧规则的 72919。内容变化时自动选择高于已有版本的修订号；内容相同时跳过。达到 99 或指定的旧上游无法产生更高版本时明确报错，不覆盖旧 Release。
 
 Release 标签为 `fork-<versionCode>`，APK 为 `fork-<versionCode>-arm64.apk`，手机更新器继续按内部版本号比较更新。同一包名始终使用同一证书，不要降低版本号或更换签名。切换到新规则后，旧规则 APK 无法直接覆盖安装新规则 APK。
 
@@ -63,6 +63,6 @@ Gradle 依赖缓存仅包含 `~/.gradle/caches/modules-2` 和 `~/.gradle/wrapper
 
 C/C++ 编译使用 `ccache`，通过 CMake 的 C/C++ compiler launcher 环境变量启用。缓存只包含原生编译缓存，不保存 APK、Java 编译输出、签名文件或 Gradle 项目输出。缓存上限 2 GB，按系统、架构、NDK 和 CMake 版本隔离；每次成功编译后保存新快照，发布失败也不会丢失已保存的编译缓存。保留默认源码、头文件、参数和工作目录校验，编译器按内容校验，不启用宽松匹配。首次构建建立缓存，后续构建可在 `Show native compiler cache statistics` 步骤查看命中率；链接、压缩和签名仍需执行。若需废弃旧缓存，递增工作流缓存键中的 `arm64-v1` 后缀。
 
-`automation/patches/customizations.patch` 保存本次定制（广告、下载、图标、推广与更新入口）。`automation/ForkUpdater.java` 是更新器的权威副本，同时在本地应用源码中保留副本。修改更新器时同步两个文件；构建脚本会把 automation 中的副本复制到上游源码。
+应用源码是发布的权威来源，包括 `TMessagesProj/src/main/java/org/telegram/messenger/ForkUpdater.java`。工作流以 `automation/upstream-base.txt` 指定的上游基线，对当前提交自动生成完整源码补丁，再应用到拉取的官方源码并作为 Release 附件保存。不再读取历史副本 `automation/patches/customizations.patch` 或 `automation/ForkUpdater.java`，无需同步它们。构建遇到补丁冲突会报错，不会忽略源码改动。
 
-上游重构后需要人工迁移改动，重新生成补丁并检查每项功能，随后等待新的上游版本号发布。补丁应用成功、编译成功不能代替实机验证。
+上游重构后需要人工迁移源码改动并检查每项功能；如果在本仓库合并新的上游基线，需要同步更新 `automation/upstream-base.txt`。补丁应用成功、编译成功不能代替实机验证。
