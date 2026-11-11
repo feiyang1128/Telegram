@@ -53,7 +53,7 @@ Firebase 可在 https://console.firebase.google.com 创建项目，注册与最�
 
 Release 标签为 `fork-<versionCode>`，APK 为 `fork-<versionCode>-arm64.apk`，手机更新器继续按内部版本号比较更新。同一包名始终使用同一证书，不要降低版本号或更换签名。切换到新规则后，旧规则 APK 无法直接覆盖安装新规则 APK。
 
-手机端通过公开 GitHub Releases API 查询最新正式 Release，最多每 6 小时自动检查一次。发现更大版本号及匹配 APK 后提示用户，在浏览器下载，由系统执行安装并验证签名。它不会静默安装，也不依赖在 App 中保存 GitHub Token。仓库和 Releases 需要公开；GitHub 无法访问或 API 限流时，自动检查静默失败，手动检查显示错误，不影响聊天。
+手机端通过公开 GitHub Releases API 查询最新正式 Release，最多每 1 小时自动检查一次。发现更大版本号及匹配 APK 后提示用户，在浏览器下载，由系统执行安装并验证签名。它不会静默安装，也不依赖在 App 中保存 GitHub Token。仓库和 Releases 需要公开；GitHub 无法访问或 API 限流时，自动检查静默失败，手动检查显示错误，不影响聊天。
 
 默认只支持 arm64；其他架构设备不要安装。Telegram 原生构建体积大，GitHub 托管 runner 可能遇到磁盘、内存或构建时长限制；首次运行后需要根据真实日志调整 runner 和上游工具链版本。
 

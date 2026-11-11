@@ -27,7 +27,7 @@ public final class ForkUpdater {
 
     public static void check(Activity activity, boolean force, Browser.Progress progress) {
         SharedPreferences prefs = activity.getSharedPreferences("fork_updates", 0);
-        if ((!force && System.currentTimeMillis() - prefs.getLong("last_success", 0) < 6 * 60 * 60 * 1000L)
+        if ((!force && System.currentTimeMillis() - prefs.getLong("last_success", 0) < 60 * 60 * 1000L)
                 || !checking.compareAndSet(false, true)) {
             if (progress != null) progress.end();
             return;
