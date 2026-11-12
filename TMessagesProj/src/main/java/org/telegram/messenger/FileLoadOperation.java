@@ -871,6 +871,9 @@ public class FileLoadOperation {
     public boolean start(final FileLoadOperationStream stream, final long streamOffset, final boolean streamPriority) {
         startTime = System.currentTimeMillis();
         updateParams();
+        if (paceDocumentRequests && downloadRequestPacer == null) {
+            downloadRequestPacer = new DownloadRequestPacer();
+        }
         if (currentDownloadChunkSize == 0) {
             if (forceSmallChunk) {
                 if (BuildVars.LOGS_ENABLED) {
