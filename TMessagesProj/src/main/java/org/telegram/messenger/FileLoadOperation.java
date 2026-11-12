@@ -860,7 +860,7 @@ public class FileLoadOperation {
             Utilities.stageQueue.cancelRunnable(resumeAfterPlayback);
             streamStartOffset = offset / currentDownloadChunkSize * currentDownloadChunkSize;
             long window = getPlaybackWindow(false);
-            if (previous != null && StreamingPolicy.isDiscontinuity(previous, offset, window, currentDownloadChunkSize)
+            if ((previous == null || StreamingPolicy.isDiscontinuity(previous, offset, window, currentDownloadChunkSize))
                     && playbackOffsets.size() == streamListeners.size()) {
                 cancelObsoletePlaybackRequests(window);
             }
