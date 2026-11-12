@@ -6,8 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       upstream_ref:
-        description: Official branch, tag or commit (empty uses the maintained upstream baseline)
-        required: false
+        description: Official branch, tag or commit to build
+        default: master
+        required: true
   schedule:
     - cron: '23 */6 * * *'
 
@@ -24,7 +25,7 @@ jobs:
     timeout-minutes: 360
     env:
       GH_TOKEN: ${{ github.token }}
-      UPSTREAM_REF: ${{ inputs.upstream_ref }}
+      UPSTREAM_REF: ${{ inputs.upstream_ref || 'master' }}
       CMAKE_C_COMPILER_LAUNCHER: ccache
       CMAKE_CXX_COMPILER_LAUNCHER: ccache
       CCACHE_DIR: ${{ github.workspace }}/.ccache
@@ -45,11 +46,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # New upstream native layouts require migration before building this fork.
-          # Default to the same maintained baseline used to generate the patch.
-          if [ -z "$UPSTREAM_REF" ]; then
-            UPSTREAM_REF=$(tr -d '\r\n' < automation-repo/automation/upstream-base.txt)
-          fi
           git init source
           git -C source remote add origin https://github.com/DrKLO/Telegram.git
           git -C source fetch origin "$UPSTREAM_REF"
