@@ -72,12 +72,12 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector;
 import androidx.media3.exoplayer.trackselection.MappingTrackSelector;
 import androidx.media3.common.TrackSelectionOverride;
 import androidx.media3.common.TrackSelectionParameters;
-import androidx.media3.exoplayer.upstream.DefaultAllocator;
 import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter;
 import androidx.media3.common.VideoSize;
 import androidx.media3.exoplayer.video.SurfaceNotValidException;
 
 import org.telegram.messenger.AndroidUtilities;
+import org.telegram.messenger.video.AdaptiveVideoLoadControl;
 import org.telegram.messenger.ApplicationLoader;
 import org.telegram.messenger.DispatchQueue;
 import org.telegram.messenger.FileLoader;
@@ -231,21 +231,7 @@ public class VideoPlayer implements Player.Listener, VideoListener, AnalyticsLis
     }
 
     private void ensurePlayerCreated() {
-        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-            .setAllocator(new DefaultAllocator(true, C.DEFAULT_BUFFER_SEGMENT_SIZE))
-            .setBufferDurationsMs(
-                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
-                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS,
-                isStory ? 1000 : 100,
-                isStory ? 1000
-                        : DefaultLoadControl.DEFAULT_BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MS)
-            .setTargetBufferBytes(DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
-            .setPrioritizeTimeOverSizeThresholds(
-                DefaultLoadControl.DEFAULT_PRIORITIZE_TIME_OVER_SIZE_THRESHOLDS)
-            .setBackBuffer(
-                DefaultLoadControl.DEFAULT_BACK_BUFFER_DURATION_MS,
-                DefaultLoadControl.DEFAULT_RETAIN_BACK_BUFFER_FROM_KEYFRAME)
-            .build();
+        DefaultLoadControl loadControl = new AdaptiveVideoLoadControl(isStory);
 
         if (player == null) {
             DefaultRenderersFactory factory;
@@ -1259,6 +1245,7 @@ public class VideoPlayer implements Player.Listener, VideoListener, AnalyticsLis
                 "&hash=" + document.access_hash +
                 "&dc=" + document.dc_id +
                 "&size=" + document.size +
+                "&durationMs=" + (long) (MessageObject.getDocumentDuration(document) * 1000) +
                 "&mime=" + URLEncoder.encode(document.mime_type, "UTF-8") +
                 "&rid=" + reference +
                 "&name=" + URLEncoder.encode(FileLoader.getDocumentFileName(document), "UTF-8") +

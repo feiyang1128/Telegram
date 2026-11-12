@@ -51,6 +51,17 @@ public class FileLoadOperation {
     private int downloadConnectionsCount = 2;
     private boolean paceDocumentRequests;
     private DownloadRequestPacer downloadRequestPacer;
+    // Accessed on stageQueue only. Keep separate positions for concurrent extractors/readers.
+    private final HashMap<FileLoadOperationStream, Long> playbackOffsets = new HashMap<>();
+    private long playbackDurationMs;
+    private long lastPlaybackOffset = -1;
+    private boolean playbackResumePending;
+    private final Runnable resumeAfterPlayback = () -> {
+        playbackResumePending = false;
+        if (playbackOffsets.isEmpty() && this.state == stateDownloading && !this.paused) {
+            startDownloadRequest(-1);
+        }
+    };
     private final Runnable pacedDownloadRequest = () -> {
         // Unlike response callbacks, a timer must never restart a cancelling operation.
         if (this.state == stateDownloading && !this.paused) {
@@ -805,6 +816,16 @@ public class FileLoadOperation {
             }
             FileLog.e("FileLoadOperation " + getFileName() + " removing stream listener " + operation);
             streamListeners.remove(operation);
+            boolean playbackReader = playbackOffsets.remove(operation) != null;
+            if (playbackReader && playbackOffsets.isEmpty()) {
+                // Extractors close and reopen the source during a seek. Don't fill the old position in that gap.
+                playbackResumePending = true;
+                Utilities.stageQueue.cancelRunnable(pacedDownloadRequest);
+                Utilities.stageQueue.cancelRunnable(resumeAfterPlayback);
+                Utilities.stageQueue.postRunnable(resumeAfterPlayback, 250);
+            } else if (playbackReader && state == stateDownloading && !paused) {
+                startDownloadRequest(-1);
+            }
 //            if (!isStory && streamListeners.isEmpty()) {
 //                Utilities.stageQueue.cancelRunnable(cancelAfterNoStreamListeners);
 //                Utilities.stageQueue.postRunnable(cancelAfterNoStreamListeners, 1200);
@@ -818,6 +839,96 @@ public class FileLoadOperation {
         pause();
         FileLoader.getInstance(currentAccount).cancelLoadFile(getFileName());
     };
+
+    void updateStreamPosition(FileLoadOperationStream reader, long offset, long durationMs) {
+        Utilities.stageQueue.postRunnable(() -> {
+            // Sequential/encrypted files and prefix preloads must retain their original ordering.
+            if (streamListeners == null || !streamListeners.contains(reader) || notRequestedBytesRanges == null
+                    || key != null || encryptFile || isPreloadVideoOperation || preloadPrefixSize > 0
+                    || state != stateDownloading || paused) {
+                return;
+            }
+            if (durationMs > 0) {
+                playbackDurationMs = durationMs;
+            }
+            Long previous = playbackOffsets.put(reader, offset);
+            if (previous == null && lastPlaybackOffset >= 0) {
+                previous = lastPlaybackOffset;
+            }
+            lastPlaybackOffset = offset;
+            playbackResumePending = false;
+            Utilities.stageQueue.cancelRunnable(resumeAfterPlayback);
+            streamStartOffset = offset / currentDownloadChunkSize * currentDownloadChunkSize;
+            long window = getPlaybackWindow(false);
+            if (previous != null && StreamingPolicy.isDiscontinuity(previous, offset, window, currentDownloadChunkSize)
+                    && playbackOffsets.size() == streamListeners.size()) {
+                cancelObsoletePlaybackRequests(window);
+            }
+            startDownloadRequest(-1);
+        });
+    }
+
+    private long getPlaybackWindow(boolean urgent) {
+        return Math.max(currentDownloadChunkSize, urgent
+                ? StreamingPolicy.urgentBytes(totalBytesCount, playbackDurationMs)
+                : StreamingPolicy.aheadBytes(totalBytesCount, playbackDurationMs, DownloadSpeedEstimator.getBitrate()));
+    }
+
+    private boolean isInPlaybackWindow(long offset, long length, long window) {
+        for (long position : playbackOffsets.values()) {
+            if (StreamingPolicy.overlapsWindow(offset, length, position, window)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private long nextPlaybackOffset(boolean urgent) {
+        long window = getPlaybackWindow(urgent);
+        long bestOffset = -1;
+        long bestDistance = Long.MAX_VALUE;
+        for (long position : playbackOffsets.values()) {
+            long aligned = position / currentDownloadChunkSize * currentDownloadChunkSize;
+            for (Range range : notRequestedBytesRanges) {
+                long candidate = StreamingPolicy.candidateOffset(range.start, range.end, position, window, currentDownloadChunkSize);
+                if (candidate >= 0 && candidate - aligned < bestDistance) {
+                    bestOffset = candidate;
+                    bestDistance = candidate - aligned;
+                }
+            }
+        }
+        return bestOffset;
+    }
+
+    private void cancelObsoletePlaybackRequests(long window) {
+        int[] cancelledBytes = new int[ConnectionsManager.DownloadConnectionsCount];
+        for (int i = requestInfos.size() - 1; i >= 0; i--) {
+            RequestInfo info = requestInfos.get(i);
+            if (info == priorityRequestInfo || isInPlaybackWindow(info.offset, info.chunkSize, window)) {
+                continue;
+            }
+            requestInfos.remove(i);
+            // Discard callbacks for obsolete chunks; downloaded ranges and useful in-flight chunks remain intact.
+            info.cancelled = true;
+            removePart(notRequestedBytesRanges, info.offset, info.offset + info.chunkSize);
+            requestedBytesCount -= info.chunkSize;
+            if (info.requestToken != 0) {
+                int token = info.requestToken;
+                AndroidUtilities.runOnUIThread(() -> uiRequestTokens.remove((Integer) token));
+                ConnectionsManager.getInstance(currentAccount).cancelRequest(token, true);
+                cancelledBytes[info.connectionType >>> 16] += info.chunkSize;
+            }
+        }
+        // Cancelled responses still occupy their sockets. On slow links don't leave a seek behind megabytes of them.
+        if (!DownloadSpeedEstimator.isFast()) {
+            for (int i = 0; i < cancelledBytes.length; i++) {
+                if (cancelledBytes[i] > getMaxCancelledBytesPerConnection()) {
+                    ConnectionsManager.getInstance(currentAccount).discardConnection(isCdn ? cdnDatacenterId : datacenterId,
+                            ConnectionsManager.ConnectionTypeDownload | (i << 16));
+                }
+            }
+        }
+    }
 
     private void copyNotLoadedRanges() {
         if (notLoadedBytesRanges == null) {
@@ -2305,6 +2416,7 @@ public class FileLoadOperation {
             state = stateDownloading;
         }
         if (paused || reuploadingCdn || state != stateDownloading || requestingReference ||
+                (playbackResumePending && playbackOffsets.isEmpty()) ||
                 (!isStory && streamPriorityStartOffset == 0 && (!nextPartWasPreloaded && (requestInfos.size() + delayedRequestInfos.size() >= currentMaxDownloadRequests))) ||
                 (isPreloadVideoOperation && (requestedBytesCount > preloadMaxBytes || moovFound != 0 && requestInfos.size() > 0))) {
             if (BuildVars.LOGS_ENABLED && FULL_LOGS) {
@@ -2312,6 +2424,9 @@ public class FileLoadOperation {
             }
             return;
         }
+        boolean playback = !playbackOffsets.isEmpty() && notRequestedBytesRanges != null
+                && streamPriorityStartOffset == 0 && !isPreloadVideoOperation && preloadPrefixSize == 0;
+        boolean urgentPlayback = playback && nextPlaybackOffset(true) >= 0;
         int count = 1;
         if (isStory) {
             count = Math.max(0, currentMaxDownloadRequests - requestInfos.size());
@@ -2322,7 +2437,13 @@ public class FileLoadOperation {
             }
         }
 
-        if (downloadRequestPacer != null) {
+        if (playback) {
+            int maxPlaybackRequests = (int) Math.max(1, getPlaybackWindow(false) / currentDownloadChunkSize);
+            count = Math.min(count, Math.max(0, maxPlaybackRequests - requestInfos.size() - delayedRequestInfos.size()));
+        }
+        if (urgentPlayback) {
+            count = Math.min(count, 4);
+        } else if (downloadRequestPacer != null) {
             long delay = downloadRequestPacer.remainingDelay(SystemClock.uptimeMillis());
             if (delay > 0) {
                 Utilities.stageQueue.postRunnable(pacedDownloadRequest, delay);
@@ -2378,6 +2499,11 @@ public class FileLoadOperation {
                     FileLog.d("start next preload from " + downloadOffset + " size " + totalBytesCount + " for " + cacheFilePreload);
                 }
                 preloadNotRequestedBytesCount -= currentDownloadChunkSize;
+            } else if (playback) {
+                downloadOffset = nextPlaybackOffset(urgentPlayback);
+                if (downloadOffset < 0) {
+                    break;
+                }
             } else {
                 if (notRequestedBytesRanges != null) {
                     long streamOffset = streamPriorityStartOffset != 0 ? streamPriorityStartOffset : streamStartOffset;

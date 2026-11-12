@@ -13,6 +13,7 @@ import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.common.util.Util.castNonNull;
 
 import android.net.Uri;
+import android.os.SystemClock;
 
 import androidx.annotation.Nullable;
 
@@ -55,6 +56,9 @@ public class FileStreamLoadOperation implements DataSource, FileLoadOperationStr
     private TLRPC.Document document;
     private Object parentObject;
     private int currentAccount;
+    private long durationMs;
+    private long reportedOffset = -1;
+    private long reportedAt;
     File currentFile;
 
     private static final ConcurrentHashMap<Long, Integer> priorityMap = new ConcurrentHashMap<>();
@@ -96,6 +100,10 @@ public class FileStreamLoadOperation implements DataSource, FileLoadOperationStr
         document.dc_id = Utilities.parseInt(uri.getQueryParameter("dc"));
         document.mime_type = uri.getQueryParameter("mime");
         document.file_reference = Utilities.hexToBytes(uri.getQueryParameter("reference"));
+        durationMs = Utilities.parseLong(uri.getQueryParameter("durationMs"));
+        if (durationMs <= 0 && parentObject instanceof MessageObject) {
+            durationMs = (long) (((MessageObject) parentObject).getDuration() * 1000);
+        }
         TLRPC.TL_documentAttributeFilename filename = new TLRPC.TL_documentAttributeFilename();
         filename.file_name = uri.getQueryParameter("name");
         document.attributes.add(filename);
@@ -108,6 +116,8 @@ public class FileStreamLoadOperation implements DataSource, FileLoadOperationStr
         currentOffset = dataSpec.position;
         requestedLength = dataSpec.length;
         loadOperation = FileLoader.getInstance(currentAccount).loadStreamFile(this, document, null, parentObject, currentOffset, false, getCurrentPriority());
+        reportedOffset = -1;
+        reportStreamPosition(true);
         bytesTransferred = 0;
         bytesRemaining = document.size - dataSpec.position;
         if (requestedLength != C.LENGTH_UNSET) {
@@ -145,6 +155,16 @@ public class FileStreamLoadOperation implements DataSource, FileLoadOperationStr
         return FileLoader.PRIORITY_HIGH;
     }
 
+    private void reportStreamPosition(boolean force) {
+        long now = SystemClock.elapsedRealtime();
+        if (loadOperation != null && (force || reportedOffset < 0 || currentOffset - reportedOffset >= 128 * 1024
+                || now - reportedAt >= 250)) {
+            loadOperation.updateStreamPosition(this, currentOffset, durationMs);
+            reportedOffset = currentOffset;
+            reportedAt = now;
+        }
+    }
+
     @Override
     public int read(byte[] buffer, int offset, int readLength) throws IOException {
         if (readLength == 0) {
@@ -170,6 +190,7 @@ public class FileStreamLoadOperation implements DataSource, FileLoadOperationStr
                             this.loadOperation.removeStreamListener(this);
                             this.loadOperation = loadOperation;
                         }
+                        reportStreamPosition(true);
 //                        FileLog.e("FileStreamLoadOperation " + document.id + " read sleeping.... Zzz");
                         if (countDownLatch != null) {
                             countDownLatch.await();
@@ -225,6 +246,7 @@ public class FileStreamLoadOperation implements DataSource, FileLoadOperationStr
                 bytesRead = file.read(buffer, offset, availableLength);
                 if (bytesRead > 0) {
                     currentOffset += bytesRead;
+                    reportStreamPosition(false);
                     bytesRemaining -= bytesRead;
                     bytesTransferred += bytesRead;
                     bytesTransferred(bytesRead);
@@ -259,7 +281,7 @@ public class FileStreamLoadOperation implements DataSource, FileLoadOperationStr
             file = null;
         }
         uri = null;
-        allStreams.remove(document.id);
+        allStreams.remove(document.id, this);
         if (opened) {
             opened = false;
             transferEnded();
@@ -302,6 +324,7 @@ public class FileStreamLoadOperation implements DataSource, FileLoadOperationStr
                 "&hash=" + document.access_hash +
                 "&dc=" + document.dc_id +
                 "&size=" + document.size +
+                "&durationMs=" + (long) (MessageObject.getDocumentDuration(document) * 1000) +
                 "&mime=" + URLEncoder.encode(document.mime_type, "UTF-8") +
                 "&rid=" + FileLoader.getInstance(currentAccount).getFileReference(parent) +
                 "&name=" + URLEncoder.encode(FileLoader.getDocumentFileName(document), "UTF-8") +

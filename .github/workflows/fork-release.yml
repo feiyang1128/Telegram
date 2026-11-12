@@ -94,6 +94,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Test streaming policy
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          javac -d streaming-tests automation-repo/TMessagesProj/src/main/java/org/telegram/messenger/StreamingPolicy.java automation-repo/automation/tests/StreamingPolicyTest.java
+          java -cp streaming-tests StreamingPolicyTest
       - name: Restore Gradle dependencies
         if: steps.version.outputs.exists == 'false'
         uses: actions/cache@v4
