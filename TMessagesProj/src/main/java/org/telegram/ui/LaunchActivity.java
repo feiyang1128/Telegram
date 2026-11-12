@@ -6900,6 +6900,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
 
     @Override
     protected void onPause() {
+        org.telegram.messenger.ForkUpdater.onPause(this);
         super.onPause();
         isResumed = false;
         WidgetMedia.onAppPaused(true);
@@ -7213,6 +7214,7 @@ public class LaunchActivity extends BasePermissionsActivity implements INavigati
     @Override
     protected void onResume() {
         super.onResume();
+        org.telegram.messenger.ForkUpdater.onResume(this);
         WidgetMedia.onAppPaused(false);
         isResumed = true;
         PipCoordinator.getInstance().onActivityResume(this);

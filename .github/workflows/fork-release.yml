@@ -99,6 +99,11 @@ jobs:
         run: |
           javac -d streaming-tests automation-repo/TMessagesProj/src/main/java/org/telegram/messenger/StreamingPolicy.java automation-repo/automation/tests/StreamingPolicyTest.java
           java -cp streaming-tests StreamingPolicyTest
+      - name: Test fork update validation
+        if: steps.version.outputs.exists == 'false'
+        run: |
+          javac -d update-tests automation-repo/TMessagesProj/src/main/java/org/telegram/messenger/ForkUpdatePolicy.java automation-repo/automation/tests/ForkUpdatePolicyTest.java
+          java -cp update-tests ForkUpdatePolicyTest
       - name: Restore Gradle dependencies
         if: steps.version.outputs.exists == 'false'
         uses: actions/cache@v4
